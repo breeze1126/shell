@@ -1,0 +1,722 @@
+#!/bin/sh
+###Kerberos认证
+kinit -kt /home/edc_jk/edc_jk.keytab edc_jk/admin
+
+
+#########################################
+#公司@：中兴软创
+#脚本功能@:导出HIVE库中的客户明细表并上传到客户视图数据库。
+#入参@：
+#开发人员@：CJ
+#最后修改时间@：2018/06/24 
+#########################################
+
+#数据库环境变量
+ORACLE_BASE=/home/oracle;
+export ORACLE_BASE
+ORACLE_HOME=$ORACLE_BASE/product/11.2.0.4/client_1;
+export ORACLE_HOME
+PATH=$ORACLE_HOME/bin:$PATH;
+export PATH
+TNS_ADMIN=$ORACLE_HOME/network/admin
+export TNS_ADMIN
+export NLS_LANG=American_America.ZHS16GBK 
+LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib; export LD_LIBRARY_PATH
+CLASSPATH=$ORACLE_HOME/jlib:$ORACLE_HOME/rdbms/jlib;
+export CLASSPATH
+
+##接收参数
+ acct_period=$1
+ lan_id=-1
+
+##参数校验
+ if [ $# -lt 1 ];then
+    echo " 参数校验失败！脚本参数:账期 "
+    echo "retMes <参数校验失败！脚本参数:账期> "
+    echo "retCode -1"
+    exit 1
+ fi
+
+
+
+##配置表查询用户
+edc_query_user='EDC_YFXT'
+edc_query_pwd='Tmp_0619edc'
+edc_query_serv='134.176.123.35:1521/bssview'
+#####################################
+#####在Oracle建表，#####更新配置表
+
+TMP_TAB_NAME=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select lower('TEMP_'||TAB_NAME) from TAR_GRP_REL
+where upper(tab_name)like upper('%tar_grp_%') group by tab_name order by tab_name desc;
+exit
+EOF`
+
+
+for table_code in ${TMP_TAB_NAME}
+do
+######日志文件
+log_file=/inf_file/script/sqludr2/ftpload/log/export_${table_code}_${lan_id}_to_file.log
+echo "${table_code} ${acct_period} ${lan_id}">${log_file}
+ 
+ echo "table_code is ${table_code}";
+
+ ###########判断当前账期数据量是否为0
+ hive_num_cal_t='select count(*) from znyx_apped.bss3_'${table_code}' where day_id = '${acct_period}' ;'
+ hive_num_cal=`/usr/bin/hive --hiveconf mapreduce.job.queuename=root.edc_jk -e "${hive_num_cal_t};"`
+
+ echo "hive_num_cal:${hive_num_cal}"
+ 
+if [ ${hive_num_cal} -ne 0 ]
+then 
+ 
+	#########判断数据库中是否有此表
+	t_count=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+	set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	select count(*) from all_all_tables c where c.table_name='${table_code}';
+	exit
+	EOF`
+	echo "t_count is ${t_count}."
+	
+	if [ ${t_count} -eq 0 ]
+	then
+	
+ sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+  set heading off feedback off pagesize 0 verify off echo off linesize 4000
+ create table ${table_code}
+ (
+  DAY_ID  NUMBER(16),
+  LAN_ID  VARCHAR2(2) not null,
+  ACC_NBR VARCHAR2(32) not null,
+  COL1    VARCHAR2(32)
+ )
+ partition by list (DAY_ID)
+ subpartition by list (LAN_ID)
+(
+  partition P20180621 values (20180621)
+  (
+    subpartition P20180621_SP10 values ('10'),
+    subpartition P20180621_SP11 values ('11'),
+    subpartition P20180621_SP12 values ('12'),
+    subpartition P20180621_SP13 values ('13'),
+    subpartition P20180621_SP14 values ('14'),
+    subpartition P20180621_SP15 values ('15'),
+    subpartition P20180621_SP16 values ('16'),
+    subpartition P20180621_SP17 values ('17'),
+    subpartition P20180621_SP18 values ('18'),
+    subpartition P20180621_SP19 values ('19'),
+    subpartition P20180621_SP20 values ('20'),
+    subpartition P20180621_SP21 values ('21'),
+    subpartition P20180621_SP22 values ('22'),
+    subpartition P20180621_SP23 values ('23'),
+    subpartition P20180621_SPNA values (default)
+  )
+);
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    comment on table ${table_code}  is '客户实例对应表';
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    comment on column ${table_code}.DAY_ID  is '账期';
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    comment on column ${table_code}.LAN_ID  is '本地网';
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    comment on column ${table_code}.ACC_NBR  is '业务号码 ';
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    comment on column ${table_code}.COL1  is '宽带账号';
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    create index INDE_ACC_NBR_${acct_period}_${table_code} on ${table_code} (ACC_NBR);
+exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+ set heading off feedback off pagesize 0 verify off echo off linesize 4000
+    create index INDE_LAN_ID_${acct_period}_${table_code} on ${table_code} (LAN_ID);
+exit
+EOF
+
+	fi 
+
+	########取配置信息########
+	
+	echo "账期：${#acct_period}">>${log_file}
+	
+	if [ ${#acct_period} = 8 ]; then
+	month_id=${acct_period:0:6}
+	day_id=${acct_period}
+	day_id1=`date -d "${day_id} 1 day ago" +"%Y%m%d"` #前一天
+	day_id2=`date -d "${day_id} 2 day ago" +"%Y%m%d"` #前两天
+	hour_id=0
+	elif [ ${#acct_period} = 6 ]; then
+	month_id=${acct_period}
+	day_id=${acct_period}01
+	else
+	echo "retMes <账期入参错误> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##判断是否有配置信息
+	echo "select count(*) from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+v_count=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select count(*) from HIVE_DATA_TO_FILE
+where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "v_count is :${v_count}">>${log_file}
+	
+	if [ ${v_count} -eq 0 ]
+	then 
+	##########插入配置信息
+	`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF 
+	set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	insert into HIVE_DATA_TO_FILE(database_name, table_name, table_code, export_sql, file_path, file_name,hdfs_path, state, export_method, comments, export_cycle, file_duration, tmp_table_name, control_file, control_log_file, import_target_num_sql, export_sql_bak)
+	select 'ZNYX_APPED','${table_code}','${table_code}','select day_id, lan_id ,acc_nbr,col1 from znyx_apped.bss3_${table_code}  where day_id = @DAY_ID@;','/inf_file/edc_inf/share/day/znyx_cdr','${table_code}_@DAY_ID@.dat','/user/hive/warehouse/znyx_apped.db/${table_code}','00A','2','select count(*) from znyx_apped.bss3_${table_code} where day_id = @DAY_ID@ ;','DD',1,'tmp_${table_code}','/inf_file/script/sqludr2/ftpload/cfg/yfxt/${table_code}.ctl','/inf_file/script/sqludr2/ftpload/log/${table_code}.log','select count(*) from ${table_code} where day_id=@DAY_ID@;','' from dual;
+	exit
+	EOF`
+	
+	elif [ ${v_count} -ne 1 ]
+	then 
+	echo " <${table_code}配置信息不正确，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确，没有配置或配置了多条或者配置已失效，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##############增加表分区
+`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+alter table ${table_code} add partition P${acct_period} values(${acct_period});
+exit
+EOF`
+	
+	##取配置表中的 database_name
+	echo "select DATABASE_NAME from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+database_name=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select DATABASE_NAME from HIVE_DATA_TO_FILE
+where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "database is :${database_name}">>${log_file}
+	echo "database is :${database_name}"
+	
+	if [ -z ${database_name} -o ${database_name} = -1 ]
+	then 
+	echo " <${table_code}配置信息不正确， database_name 没有配置，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确， database_name  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##取配置表中的table_name
+	echo "select TABLE_NAME from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+	echo "select TABLE_NAME from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';"
+	
+table_name=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select TABLE_NAME from HIVE_DATA_TO_FILE
+where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "table_name is :${table_name}">>${log_file}
+	
+	if [ -z ${table_name} -o ${table_name} = -1 ]
+	then 
+	echo " <${table_code}配置信息不正确， table_name 没有配置，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确， table_name  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##取配置表中的tmp_table_name
+	echo "select TMP_TABLE_NAME from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+tmp_table_name=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select replace(replace(replace(replace(replace(trim(TMP_TABLE_NAME),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@HOUR_ID@','${hour_id}'),'@MINUTE_ID@','${minute_id}') 
+from HIVE_DATA_TO_FILE
+where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "tmp_table_name is :${tmp_table_name}">>${log_file}
+	
+	if [ -z ${tmp_table_name} -o ${tmp_table_name} = -1 ]
+	then 
+	echo " <${table_code}配置信息不正确， tmp_table_name 没有配置，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确， tmp_table_name  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##取得将生成文件放在接口机上面的路径file_path
+	echo "select trim(file_path) from HIVE_DATA_TO_FILE where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+file_path=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select trim(file_path) from HIVE_DATA_TO_FILE where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "file path is :${file_path}">>${log_file}
+	
+	if [ -z ${file_path} -o ${file_path} = -1 ]
+	then 
+	echo " <${table_code}配置信息不正确， file_path 没有配置，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确， file_path  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##取得将生成文件放在接口机上面的名称file_name
+	echo "select replace(replace(replace(replace(replace(trim(file_name),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@HOUR_ID@','${hour_id}'),'@MINUTE_ID@','${minute_id}')
+	from HIVE_DATA_TO_FILE
+	where upper(table_code)=upper('${table_code}') and upper(state)='00A';" >>${log_file}
+	
+file_name=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select replace(replace(replace(replace(replace(trim(file_name),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@HOUR_ID@','${hour_id}'),'@MINUTE_ID@','${minute_id}')
+from HIVE_DATA_TO_FILE
+where upper(table_code)=upper('${table_code}') and upper(state)='00A';
+exit
+EOF`
+	
+	echo "file name is :${file_name}">>${log_file}
+	
+	if [ -z ${file_name} -o ${file_name} = -1 ]
+	then 
+	echo " <${table_code}配置信息不正确， file_name 没有配置，请检查数据库配置> "
+	echo "retMes <${table_code}配置信息不正确， file_name  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##写消息进入标志文件
+	flg_file_name=`echo "${file_name}"|sed 's/.dat/.flg/g'`
+	flg_file=${file_path}/${flg_file_name}
+	
+	echo "标志文件flg file is :${flg_file}">>${log_file}
+	
+	##获取导出方法属性
+	echo "select export_method FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+export_method=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select export_method FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+	
+	echo "export_method is ${export_method}">>${log_file}
+	
+	if [ -z ${export_method} ]
+	then 
+	echo " <export_method：2为select选择性导出方式。> "
+	echo " <${export_method}配置信息不正确， export_method 没有配置，请检查数据库配置> "
+	echo "retMes <${export_method}配置信息不正确， export_method  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	
+	elif [ ${export_method} = 2 ]
+	then
+	######文件名拼接
+	file=${file_path}/${file_name} 
+	echo "${file} is utf-8 file">>${log_file}
+	
+	######获取hive导出语句
+	echo "select replace(replace(replace(replace(replace(trim(export_sql),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+export_sql=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select replace(replace(replace(replace(replace(trim(export_sql),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+export_sql_bak=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select replace(replace(replace(replace(replace(trim(export_sql_bak),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+	
+	export_length=`echo "${export_sql}"|sed -n '1p'|awk '{print length($0)}'`
+	export_length_bak=`echo "${export_sql_bak}"|sed -n '1p'|awk '{print length($0)}'`
+	if [ ${export_length} -eq 0 ] && [ ${export_length_bak} -eq 0 ]
+	then 
+		echo " <${table_code}配置信息不正确， export_sql 没有配置，请检查数据库配置> "
+		echo "retMes <${table_code}配置信息不正确，export_sql  没有配置，请检查数据库配置> "
+		echo "retCode -1"
+		exit 1
+	fi
+	export_sql=${export_sql}' '${export_sql_bak}
+	echo "export_sql is ${export_sql}">>${log_file}
+	echo "export_sql is ${export_sql}"
+	
+	######数据导出
+	echo "开始导出 is `date`">>${log_file}
+	echo "开始导出 is `date`"
+	
+	echo "生成临时文件夹 is `date`">>${log_file}
+	echo "生成临时文件夹 is `date`"
+	
+	if [ ${#acct_period} = 8 ]; then
+		tmp_dir=/inf_file/edc_inf/share/day/${tmp_table_name}
+	elif [ ${#acct_period} = 6 ]; then
+		tmp_dir=/inf_file/edc_inf/share/mon/${tmp_table_name}
+	fi
+	
+	if [ ! -d ${tmp_dir} ]; then
+		mkdir ${tmp_dir}
+	fi
+	
+	echo "临时文件夹${tmp_dir}">>${log_file}
+	
+	##数据写入文件中
+	/usr/bin/hive --hiveconf mapreduce.job.queuename=root.edc_jk -e "insert overwrite local directory '${tmp_dir}' row format delimited fields terminated by '|' lines terminated by '\n' null defined as '' ${export_sql};"
+	cat /dev/null>${file} #清空内容文件
+	cat ${tmp_dir}/*>>${file}
+	rm -rf ${tmp_dir}
+	
+	echo "删除临时文件夹结束 is `date`"
+	echo "删除临时文件夹结束 is `date`">>${log_file}
+	
+	echo "导出结束 is `date`"
+	echo "导出结束 is `date`" >>${log_file}
+	
+	######统计文件的记录数
+	file_num=`cat ${file}|wc -l`
+	echo "导出文件的记录数为：${file_num}">>${log_file}
+	echo "导出文件的记录数为：${file_num}"
+	
+	######获取select语句的记录数
+	############comments 配置为export_sql的hive稽核部分
+	echo "select replace(replace(replace(replace(replace(trim(comments),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+	comments=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+	set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	select replace(replace(replace(replace(replace(trim(comments),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+	exit
+	EOF`
+	echo "comments is ${comments}" >>${log_file}
+	echo "comments is ${comments}"
+	
+	comments_length=`echo "${comments}"|sed -n '1p'|awk '{print length($0)}'`
+	if [ ${comments_length} -eq 0 ]
+	then
+		echo " <${table_code}配置信息不正确， comments 没有配置，请检查数据库配置> "
+		echo "retMes <${table_code}配置信息不正确，comments  没有配置，请检查数据库配置> "
+		echo "retCode -1"
+		exit 1
+	fi
+	
+	hive_num=`/usr/bin/hive --hiveconf mapreduce.job.queuename=root.edc_jk -e "${comments};"`
+	echo "hive 记录数为：${hive_num}">>${log_file}
+	echo "hive 记录数为：${hive_num}"
+	
+	else
+	echo " <export_method：2为select选择性导出方式。> "
+	echo " <${export_method：2为select选择性导出方式。}配置信息不正确， export_method 没有配置，请检查数据库配置> "
+	echo "retMes <${export_method：2为select选择性导出方式。}配置信息不正确， export_method  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	
+	fi
+	
+	##is scuss
+	if [ ${file_num} -eq ${hive_num} ]
+	then 
+			echo "文件导出成功">>${log_file}
+			echo "文件导出成功"
+	
+			#获取文件字符数大小
+			file_size=`ls -l ${file}|awk '{print $5}'`
+	echo "生成文件的字符数为：${file_size}">>${log_file}
+	
+	else
+	echo "文件导出失败">>${log_file}
+	echo "retMes <文件导出失败> "
+	echo "retMes -1"
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##删除超过存放时间范围内的文件
+	#####获取文件存放时间类型
+	echo "<--------------删除超时文件--------------->"
+	echo "<--------------删除超时文件--------------->">>${log_file}
+	echo "select export_cycle FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';"
+	echo "select export_cycle FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+	export_cycle=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+	set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	select export_cycle FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+	exit
+	EOF`
+	
+	#####获取文件存放时长
+	echo "select file_duration FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+	file_duration=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+	set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	select file_duration FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+	exit
+	EOF`
+	
+	if [ ${file_duration} != 0 -a -n ${file_duration} ]
+		then
+		if [ ${export_cycle} = DD ]
+			then
+			file_day=`date -d "${day_id} ${file_duration} day ago" +"%Y%m%d"`    #前${file_duration}天
+			over_time_file=`echo "${file}"|sed "s/${day_id}/${file_day}/g"`
+			over_time_flg_file=`echo "${flg_file}"|sed "s/${day_id}/${file_day}/g"`
+		elif [ ${export_cycle} = MM ]
+			then
+			file_mon=`date -d "${day_id} ${file_duration} months ago" +"%Y%m"`    #前${file_duration}月
+			over_time_file=`echo "${file}"|sed "s/${month_id}/${file_mon}/g"`
+			over_time_flg_file=`echo "${flg_file}"|sed "s/${month_id}/${file_mon}/g"`
+		else
+			echo " <${table_code}配置信息不正确， export_cycle 没有配置或配置错误（DD），请检查数据库配置> "
+					echo "retMes <${table_code}配置信息不正确， export_cycle  没有配置，请检查数据库配置> "
+					echo "retCode -1"
+					exit 1
+		fi 
+		
+		echo "清除超时文件：">>${log_file}
+		echo "清除超时文件!"
+		
+		#####清除超时文件     
+		find ${over_time_file} -type f -exec rm -vf {} \;>>${log_file}
+		find ${over_time_flg_file} -type f -exec rm -vf {} \;>>${log_file}
+		
+		echo "清除超时文件完成!"
+		echo "清除超时文件完成!">>${log_file}
+		
+	else
+		echo "<${table_code}配置信息中， file_duration 没有配置，不执行删除操作！>"
+	fi
+	echo "<--------------超时文件删除完成--------------->">>${log_file}
+	echo "<--------------超时文件删除完成--------------->"
+	
+	####将文件导入oracle
+	##控制文件
+	echo "select control_file FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+control_file=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select control_file FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+	
+	echo "control_file is ${control_file}" >>${log_file}
+	
+	if [ -z ${control_file} -o ${control_file} = -1 ]
+	then
+	echo " <${control_file}配置信息不正确， control_file 没有配置，请检查数据库配置> "
+	echo "retMes <${control_file}配置信息不正确， control_file  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##控制日志文件
+	echo "select control_log_file FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+control_log_file=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select control_log_file FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+	
+	echo "control_log_file is ${control_log_file}" >>${log_file}
+	
+	control_length=`echo "${control_log_file}"|awk '{print length($0)}'`
+	if [ ${control_length} -eq 0 ]
+	then
+	echo " <${control_log_file}配置信息不正确， control_log_file 没有配置，请检查数据库配置> "
+	echo "retMes <${control_log_file}配置信息不正确， control_log_file  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+##支持重跑
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+alter table ${table_code} truncate partition p${day_id};
+commit;
+exit
+EOF
+
+
+	##启动导入程序
+	echo "启动导入程序">>${log_file}
+	echo "启动导入程序"
+	
+	nohup sqlldr "userid='${edc_query_user}/${edc_query_pwd}@${edc_query_serv}' control='${control_file}' data='${file_path}/${file_name}' log ='${control_log_file}' direct=true" > /dev/null 2>&1 &
+	
+	##判断进程是否存在
+		while [ 1 -eq 1 ]
+		do
+		psnum=`ps -ef |grep -v grep | grep sqlldr |grep ${file_path}/${file_name}|wc -l` 
+		if [ ${psnum} -eq 1 ]
+		then
+		echo "proc is running wating"
+		sleep 1m
+		else
+		break
+		fi
+		done
+	
+	echo "导入程序完成"
+	echo "导入程序完成">>${log_file}
+	
+	#添加direct参数后count暂停1分钟
+	sleep 1m
+	
+	####检查测试表数据量
+	##目标表数量统计语句
+	echo "测试表数量开始">>${log_file}
+	echo "测试表数量开始"
+	
+	echo "select replace(replace(replace(replace(replace(trim(import_target_num_sql),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';" >>${log_file}
+	
+import_target_num_sql=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+select replace(replace(replace(replace(replace(trim(import_target_num_sql),'@LANID@','${lan_id}'),'@DAY_ID@','${day_id}'),'@MONTH_ID@','${month_id}'),'@DAY_ID1@','${day_id1}'),'@DAY_ID2@','${day_id2}') FROM HIVE_DATA_TO_FILE A WHERE upper(a.table_code)=trim(upper('${table_code}')) and a.STATE ='00A';
+exit
+EOF`
+	
+	echo "import_target_num_sql is ${import_target_num_sql}" >>${log_file}
+	
+	import_length=`echo "${import_target_num_sql}"|sed -n '1p'|awk '{print length($0)}'`
+	
+	if [ ${import_length} -eq 0 ]
+	then
+	echo " <${import_target_num_sql}配置信息不正确， import_target_num_sql 没有配置，请检查数据库配置> "
+	echo "retMes <${import_target_num_sql}配置信息不正确， import_target_num_sql  没有配置，请检查数据库配置> "
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##测试表数量
+oracle_target_num=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+set heading off feedback off pagesize 0 verify off echo off linesize 4000
+${import_target_num_sql}
+exit
+EOF`
+	
+	echo "oracle_target_num is ${oracle_target_num}"
+	echo "oracle_target_num is ${oracle_target_num}">>${log_file}
+	echo "测试表数量完成"
+	echo "测试表数量完成">>${log_file}
+	
+	##判断数据导入ORACLE测试表是否成功
+	if [ ${oracle_target_num} = ${hive_num} ]
+	then 
+	##如果数据量相等，则删除前前天的数据
+	# sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv} <<EOF
+	# set heading off feedback off pagesize 0 verify off echo off linesize 4000
+	# alter table ${table_code} drop partition p${day_id2};
+	# commit;
+	# exit
+	# EOF
+	echo "数据导入ORACLE目标表成功">>${log_file}
+	echo "数据导入ORACLE目标表成功"
+	else
+	echo "数据导入ORACLE目标表失败">>${log_file}
+	echo "数据导入ORACLE目标表失败"
+	echo "retMes -1"
+	echo "retCode -1"
+	exit 1
+	fi
+	
+	##相应hive表中的最小账期
+	echo "获取最小账期"
+	echo "获取最小账期">>${log_file}
+	
+	min_acct_month=`/usr/bin/hive --hiveconf mapreduce.job.queuename=root.edc_jk -e "select min(p_day_id) from znyx_apped.${table_name};"`
+	
+	echo "获取最小账期完成"
+	echo "获取最小账期完成">>${log_file}
+	
+	##消息写入
+	echo "<--消息写入-->">>${log_file}
+	echo "<--消息写入-->"
+	
+	echo "file_name:${file_name},file_size:${file_size},file_num:${file_num}">${flg_file}
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv}<<EOF
+set heading off feedback off pagesize 0 verify off echo off
+delete from mkt_ods_data_msg where acct_month=${day_id} and upper(table_code)=upper('${table_code}');
+insert into mkt_ods_data_msg select ${day_id},1,upper('${table_code}'),upper('${table_code} ${day_id} payment days writing data successfully!'),sysdate,'T','TASK: DATA PROCESSING SUCCESSFULLY COMPLETED!',-1,'' from dual;
+exit
+EOF
+
+mysql -h134.176.25.91 -udev_ops -pHNdxedc12#<<EOF
+delete from dev_ops.da_ods_data_msg where cycle_id=${day_id} and upper(table_name)=upper('${table_name}');
+insert into dev_ops.da_ods_data_msg select sysdate(),${day_id},'D',${month_id},${lan_id},upper('${table_name}'),upper('${table_name} ${day_id} payment days writing data successfully!'),'0',${min_acct_month} from dual;
+exit
+EOF
+
+	echo "<--消息写入完成-->"
+	echo "<--消息写入完成-->">>${log_file}
+	
+	echo "success">${log_file}
+	echo "retMes <SUCCESS!> "
+	echo "retCode 0"
+	
+	#########重命名表
+	mid_table_code=`sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv}<<EOF
+	set heading off feedback off pagesize 0 verify off echo off
+	select substr('${table_code}',6)  from  dual; 
+	exit
+	EOF`
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv}<<EOF
+set heading off feedback off pagesize 0 verify off echo off
+ alter table ${mid_table_code} rename to ${mid_table_code}_${acct_period};
+ exit
+EOF
+
+sqlplus -s ${edc_query_user}/${edc_query_pwd}@${edc_query_serv}<<EOF
+set heading off feedback off pagesize 0 verify off echo off
+ alter table ${table_code} rename to ${mid_table_code};
+ exit
+EOF
+
+# else
+	# continue
+fi
+
+done
